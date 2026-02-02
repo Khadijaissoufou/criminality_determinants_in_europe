@@ -23,8 +23,7 @@ This project investigates the socio-economic determinants of homicide rates acro
 ├── *.do                    # Stata analysis script
 ├── *.pdf                   # Project report
 ├── README.md               # This file
-└── data/                   # Data files
-    └── *.dta
+
 ```
 
 ## 🎯 Key Features

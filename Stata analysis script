@@ -1,0 +1,352 @@
+
+
+* ===========================================================================
+* PROJET : DÉTERMINANTS ÉCONOMIQUES ET VULNÉRABILITÉS STRUCTURELLES
+*          DE LA CRIMINALITÉ EN EUROPE (2010-2023)
+* Auteurs : Mahamadou Issoufou Khadija
+*           Moudir Mohammed Anis
+*           Razanaboninahitra Miangaly
+*           Roland Jarlay
+* Date : Le 15/01/2026
+* Cours : Économétrie des Données de Panel
+* ===========================================================================
+* Définition du dossier de travail 
+cd "C:\Users\khadi\OneDrive\Bureau\PROJET DONNEES DE PANEL"
+
+* Ouverture de la base de données
+use "EDP_ MahamadouIssoufou_Moudir_Razanaboninahitra_Roland_2025.dta", clear
+describe
+
+* =======================================================
+ * I/ Diagnostic de la base de données 
+* =======================================================
+* Déclaration de la structure de panel
+
+xtset id_pays annee
+
+xtdescribe
+* Vérifcation des données manquantes 
+misstable summarize ln_homicides x_pauvrete60 x_chomage_pcactifs ///
+    x_depenses_protec_soc_pcGDP x_policiers_pour100k x_surpeuplement_villes ///
+    menages_mono_p1000hab part_pop_15_24_pct pib_hab ///
+    x_gini_avant_transferts sommes_quitter_pour100k part_nes_etranger_pct
+	
+
+* Identifier quel pays a des données incomplètes
+* Compter le nombre d'années par pays
+bysort pays: gen nb_annees = _N
+* Lister le pays qui n'a pas 14 observations
+tab pays if nb_annees < 14
+
+*** Il s'agit du pays bas qui est absent sur les 3 premières **années 
+
+* =======================================================
+* II/  ANALYSE EXPLORATOIRE 
+* =======================================================
+
+* 1/Statistiques descriptives globales 
+summarize ln_homicides x_pauvrete60 x_chomage_pcactifs ///
+    x_depenses_protec_soc_pcGDP x_policiers_pour100k x_surpeuplement_villes ///
+    menages_mono_p1000hab part_pop_15_24_pct pib_hab ///
+    x_gini_avant_transferts sommes_quitter_pour100k part_nes_etranger_pct
+	
+		  		  
+*2/ Décomposition de la variance
+**2.1/ between
+xtsum  ln_homicides x_pauvrete60 x_chomage_pcactifs ///
+    x_depenses_protec_soc_pcGDP x_policiers_pour100k x_surpeuplement_villes ///
+    menages_mono_p1000hab part_pop_15_24_pct pib_hab ///
+    x_gini_avant_transferts sommes_quitter_pour100k part_nes_etranger_pct
+		
+* VISUALISATION DES DISPARITÉS PAR PAYS (BOXPLOT)
+* Création du graphique
+graph box ln_homicides, over(pays, label(angle(45) labsize(small))) ///
+    title("{bf:Dispersion du log des homicides par pays}") ///
+    subtitle("Période 2010-2023") ///
+    ytitle("Log du taux pour 100 000 hab.") ///
+    note("Source : Eurostat. Chaque boîte représente la distribution temporelle d'un pays.")
+
+** 2.2/ Varition within vs between
+preserve
+    clear
+    tempfile stats_sd
+    save `stats_sd', emptyok replace
+
+    local myvars ln_homicides x_pauvrete60 x_chomage_pcactifs x_depenses_protec_soc_pcGDP x_gini_avant_transferts menages_mono_p1000hab
+    
+    foreach v of local myvars {
+        restore, preserve
+        qui xtsum `v'
+        local b_val = r(sd_b)
+        local w_val = r(sd_w)
+        clear
+        set obs 1
+        gen varname = "`v'"
+        gen sd_between = `b_val'
+        gen sd_within = `w_val'
+        gen ratio = (`b_val'/`w_val')^2
+        append using `stats_sd'
+        save `stats_sd', replace
+    }
+
+    * Libellés clairs
+    replace varname = "Homicides" if varname == "ln_homicides"
+    replace varname = "Pauvreté" if varname == "x_pauvrete60"
+    replace varname = "Chômage" if varname == "x_chomage_pcactifs"
+    replace varname = "Dépenses sociales" if varname == "x_depenses_protec_soc_pcGDP"
+    replace varname = "Inégalités" if varname == "x_gini_avant_transferts"
+    replace varname = "Monoparentalité" if varname == "menages_mono_p1000hab"
+    
+    * Trier par dominance Between
+    gsort -ratio
+    gen ordre = _n
+    
+    * Créer une variable avec les labels dans l'ordre trié
+    gen varlabel = ""
+    forvalues i = 1/6 {
+        local thisvar = varname[`i']
+        replace varlabel = "`thisvar'" in `i'
+    }
+    
+	graph bar sd_between sd_within, ///
+        over(varlabel, ///
+            label(labsize(small) angle(45))) ///
+        bar(1, color("0 61 153")) ///
+        bar(2, color("204 0 0")) ///
+        title("{bf:Figure 1. Décomposition de la variance}", size(medlarge)) ///
+        subtitle("Écart-type between (inter-pays) vs within (temporel)", size(small)) ///
+        ytitle("Écart-type", size(small)) ///
+        legend(position(6) rows(1) ///
+            label(1 "Between : variation entre pays") ///
+            label(2 "Within : variation temporelle")) ///
+        blabel(bar, format(%4.2f) size(vsmall)) ///
+        ylabel(, angle(0) labsize(small)) ///
+        plotregion(margin(small)) ///
+        note("Source : Eurostat (2010‑2023)", size(vsmall))
+		
+		
+*3/ ANALYSE DES TRAJECTOIRES TEMPORELLES
+* 3.1. Tendance moyenne globale (La "température" de l'Europe)
+preserve
+ *On agrège les données par année
+    collapse (mean) mean_homic = ln_homicides, by(annee)
+    
+  *Calcul des stats 
+    reg mean_homic annee
+    local pente = round(_b[annee], 0.001)
+    local r2 = round(e(r2), 0.01)
+    
+    * Création du graphique
+    twoway (connected mean_homic annee, lcolor(maroon) lwidth(medium) ///
+            mcolor(maroon) msymbol(circle)) ///
+           (lfit mean_homic annee, lcolor(blue) lpattern(dash)), ///
+        title("{bf:Évolution temporelle des homicides en Europe}", size(medium)) ///
+        subtitle("Moyenne du log des homicides, UE-27 (2010-2023)", size(small)) ///
+        ytitle("Log des homicides (pour 100 000 hab.)") ///
+        xtitle("Année") ///
+        legend(order(1 "Valeur observée" 2 "Tendance linéaire") ///
+               position(11) ring(0) size(small)) ///
+        note("Source: Eurostat. Pente annuelle: `pente' (R² = `r2').", size(vsmall)) ///
+        xlabel(2010(2)2023, angle(45)) ///
+        ylabel(, angle(0)) ///
+        graphregion(color(white)) 
+
+restore
+
+*4/ Matrice de corrélation (Pearson) avec niveau de significativité
+
+pwcorr ln_homicides x_pauvrete60 x_chomage_pcactifs ///
+    x_depenses_protec_soc_pcGDP x_policiers_pour100k x_surpeuplement_villes ///
+    menages_mono_p1000hab part_pop_15_24_pct pib_hab ///
+    x_gini_avant_transferts sommes_quitter_pour100k part_nes_etranger_pct, sig star(0.05)
+
+*5/ Nuage de points de 2 variables (l'une étant un facteur de * risque et l'autre un facteur protecteur) avec le taux d'homicides.
+
+* Le facteur de risque (Pauvreté)
+twoway (scatter ln_homicides x_pauvrete60, msize(small) mc(gs13%50)) ///
+       (lfit ln_homicides x_pauvrete60, lc(cranberry) lwidth(medium)), ///
+    ytitle("Log du taux d'homicide", size(small)) ///
+    xtitle("Taux de pauvreté (%)", size(small)) ///
+    title("{bf:A. Facteur de Risque}", size(medium) color(cranberry)) ///
+    note("Corrélation : +0.34", position(5) ring(0) size(small)) ///
+    legend(off) name(gr_pauv, replace)
+
+*  Le facteur protecteur (Dépenses Sociales)
+twoway (scatter ln_homicides x_depenses_protec_soc_pcGDP, msize(small) mc(gs13%50)) ///
+       (lfit ln_homicides x_depenses_protec_soc_pcGDP, lc(emerald) lwidth(medium)), ///
+    ytitle("Log du taux d'homicide", size(small)) ///
+    xtitle("Dépenses sociales (% PIB)", size(small)) ///
+    title("{bf:B. Facteur Protecteur}", size(medium) color(emerald)) ///
+    note("Corrélation : -0.31", position(5) ring(0) size(small)) ///
+    legend(off) name(gr_soc, replace)
+
+graph combine gr_pauv gr_soc, cols(2) iscale(0.9) ///
+    title("Analyse des principaux déterminants de l'homicide", size(medium)) ///
+    subtitle("Comparaison entre précarité économique et investissement social", size(small))
+	
+* 6. Analyse de la structure 
+xtsum ln_homicides x_pauvrete60 x_depenses_protec_soc_pcGDP
+
+*  Création de l'interaction "Bouclier"
+* On veut voir si la protection sociale atténue l'effet de la pauvreté sur le crime
+gen inter_pauvrete_protec = x_pauvrete60 * x_depenses_protec_soc_pcGDP
+
+* Corrélation avec les homicides
+pwcorr ln_homicides x_pauvrete60 x_depenses_protec_soc_pcGDP inter_pauvrete_protec, sig
+
+*  On vérifie le lien Surpeuplement / Crime
+pwcorr ln_homicides x_surpeuplement_villes, sig
+
+* Visualisation rapide 
+twoway (scatter ln_homicides x_surpeuplement_villes, msize(vsmall) mc(gs12)) ///
+       (lfit ln_homicides x_surpeuplement_villes, lc(black)), ///
+    title("Pression Urbaine et Homicides") xtitle("Taux de surpeuplement (%)")
+
+* La  grande matrice de synthèse 
+pwcorr ln_homicides x_pauvrete60 x_depenses_protec_soc_pcGDP x_chomage_pcactifs ///
+       x_surpeuplement_villes x_policiers_pour100k menages_mono_p1000hab ///
+       part_pop_15_24_pct inter_pauvrete_protec, sig star(0.05)
+	   
+	   
+	   * On identifie les pays extrêmes (Moyennes sur la période)
+preserve
+    collapse (mean) ln_homicides x_pauvrete60 x_depenses_protec_soc_pcGDP, by(id_pays)
+    
+    * Pays avec la protection sociale la plus forte
+    gsort -x_depenses_protec_soc_pcGDP
+    di "TOP 3 Protection Sociale :"
+    list id_pays x_depenses_protec_soc_pcGDP in 1/3
+    
+    * Pays avec le plus d'homicides
+    gsort -ln_homicides
+    di "TOP 3 Homicides :"
+    list id_pays ln_homicides in 1/3
+restore
+
+* Graphique pour montrer les disparités entre pays
+graph box ln_homicides, over(id_pays, label(angle(45) labsize(vsmall))) ///
+    title("Distribution des taux d'homicides par pays (2010-2023)", size(medium)) ///
+    ytitle("Log du taux d'homicide") ///
+    note("Source : Eurostat. Chaque boîte montre la variation interne d'un pays.") ///
+    graphregion(color(white))
+
+
+*  7/ Analyse spatiale: Cartographie des homicides et des depenses de protection//
+
+* 7.1. ReCharger la base de données
+use "EDP_ MahamadouIssoufou_Moudir_Razanaboninahitra_Roland_2025.dta", clear
+
+* 7.2. Préparation des moyennes par pays
+preserve
+    * Création du taux réel pour la lisibilité
+    cap drop homicide_rate
+    gen homicide_rate = exp(ln_homicides)
+    
+    * Harmonisation des codes pays pour la fusion (Stata utilise souvent ISO 2 lettres)
+    gen iso_a2 = pays
+    replace iso_a2 = "GR" if iso_a2 == "EL"
+    
+    * Calcul des moyennes (Analyse "Between" pour l'EDA)
+    collapse (mean) homicide_rate x_depenses_protec_soc_pcGDP, by(iso_a2)
+    
+    tempfile map_data
+    save "`map_data'"
+restore
+
+* 7.3. Chargement du fond de carte et fusion
+use "world_shape.dta", clear
+keep if continent == "Europe"
+merge 1:1 iso_a2 using "`map_data'"
+
+* On garde uniquement les pays du panel
+keep if _merge == 3
+
+* 7.4. Création des deux cartes
+spmap homicide_rate using "world_shape_coord.dta", ///
+    id(id) fcolor(YlOrRd) clmethod(quantile) cln(5) ///
+    title("{bf:A. Taux d'homicides (pour 100k hab.)}", size(medium)) ///
+    name(map_crime, replace)
+
+spmap x_depenses_protec_soc_pcGDP using "world_shape_coord.dta", ///
+    id(id) fcolor(Blues) clmethod(quantile) cln(5) ///
+    title("{bf:B. Protection sociale (% PIB)}", size(medium)) ///
+    name(map_soc, replace)
+
+* 7.5. Combinaison finale 
+graph combine map_crime map_soc, ///
+    title("Analyse Spatiale : Crime vs État-Providence", size(medium)) ///
+    note("Moyennes sur la période 2010-2023. Source : Eurostat")
+
+graph export "EDA_Cartes_Miroir_Finales.png", replace width(4000)
+
+
+*===================================================================
+* III/ MODELISATION ECONOMETRIQUE 
+*===================================================================
+
+clear all
+set more off
+
+* Chargement de la table
+use "EDP_ MahamadouIssoufou_Moudir_Razanaboninahitra_Roland_2025.dta", clear
+
+* Déclaration du panel
+xtset id_pays annee
+
+* Création des variables log-transformées
+gen ln_pauvrete = ln(x_pauvrete60)
+gen ln_depenses_soc = ln(x_depenses_protec_soc_pcGDP)
+gen ln_police = ln(x_policiers_pour100k)
+gen ln_mono = ln(menages_mono_p1000hab)
+gen ln_surpeuplement = ln(x_surpeuplement_villes)
+gen ln_chomage = ln(x_chomage_pcactifs)
+gen ln_part15_24  = ln(part_pop_15_24_pct)
+
+*Centrage du log chômage et de part des 15–24 ans
+quietly summarize ln_chomage
+gen c_ln_chomage   = ln_chomage - r(mean)
+quietly summarize ln_part15_24
+gen c_ln_part15_24 = ln_part15_24 - r(mean)
+
+*Interaction chômage jeunes
+gen inter_chomage_jeunes = c_ln_chomage * c_ln_part15_24
+
+* Variable dépendante (log homicides pour 100k habitants)
+global Y ln_homicides
+
+* variables explicatives
+global X ln_pauvrete ln_depenses_soc ln_police ln_mono ln_surpeuplement ///
+         c_ln_chomage c_ln_part15_24 inter_chomage_jeunes pib_hab
+
+* On conserve les variables utiles
+keep pays id_pays annee $Y $X
+
+* quelques statistiques descriptives
+xtsum $Y $X
+* Estimations des modèles : POLS, FD, BE, FE et RE
+eststo clear
+eststo POLS: reg $Y $X i.annee, vce(cluster id_pays)
+eststo FD:   reg D.$Y D.($X) i.annee, nocons vce(cluster id_pays)
+preserve
+collapse (mean) $Y $X, by(id_pays)
+eststo BE: reg $Y $X, vce(robust)
+restore
+eststo FE: xtreg $Y $X i.annee, fe vce(cluster id_pays)
+eststo RE: xtreg $Y $X i.annee, re vce(cluster id_pays)
+
+* Tests
+xtreg $Y $X i.annee, re
+xttest0
+xtreg $Y $X i.annee, fe
+estimates store FE_norob
+xtreg $Y $X i.annee, re
+estimates store RE_norob
+hausman FE_norob RE_norob, sigmamore
+
+* Tableau comparatif
+esttab POLS FD BE FE RE, ///
+    b(3) se(3) star(* 0.10 ** 0.05 *** 0.01) ///
+    label compress
+
+
+
